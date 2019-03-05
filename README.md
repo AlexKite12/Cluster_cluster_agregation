@@ -1,1 +1,1 @@
-# Cluster_cluster_agregation
+# Cluster-cluster agregation
