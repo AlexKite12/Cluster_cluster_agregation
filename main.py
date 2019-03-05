@@ -54,9 +54,10 @@ def draw_3d_plot(edges, points, clusters):
 
 
     for cl in clusters:
-        #for prt in cl.coords:
-        ax.scatter(cl[0], cl[1], cl[2], s=2, c='b')
-    return ax
+        if len(cl.particles) != 0:
+            for particle in cl.particles:
+                ax.scatter(particle.coord[0], particle.coord[1], particle.coord[2], s=2, c='b')
+    return fig, ax
 
 #calculate number particles in system
 def calculate_number_particles(box_length, concentartion):
@@ -70,7 +71,8 @@ class Particle:
     mass : float
     probability : float
     diffusion : float = None
-    coords : List[float] = field(default_factory=np.array)
+    coord : List[float] = field(default_factory=list)
+    diameter : float = None
 
     @classmethod
     def calculate_diffusion(cls, friction, temperature):
@@ -79,10 +81,18 @@ class Particle:
 
 @dataclass
 class Cluster(Particle):
-    number_particles : int = 0
+    particles : List[Particle] = field(default_factory=list)
+    number_particles : int = field(init = False)
+
+    def __post_init__(self):
+        self.number_particles = len(self.particles)
+        self.mass *= self.number_particles
 
     def calculate_cluster_diffusion(self, diffusity_exponent):
-        self.diffusion *= self.mass ** diffusity_exponent
+        if self.diffusion != 0.0 and self.mass != 0.0:
+            self.diffusion *= (self.mass ** diffusity_exponent)
+        else:
+            self.diffusion = 0.0
         return self.diffusion
 
 #calculate probability forming new cluster from cluster_one and cluster_two
@@ -110,11 +120,14 @@ def generate_model(side_length, concentartion, probability, temperature, diffusi
 
     number_particles = calculate_number_particles(side_length, concentartion)
     clusters_stack = []
-    while number_particles > 0:
+    for i in range(number_particles):
         number = random.randint(0, number_particles)
-        coords = np.random.uniform(0, side_length, 3)
-        clusters_stack.append(Cluster(mass, single_probability, coords,
-                                Particle.calculate_diffusion(friction, temperature), number))
+
+        particles_stack = [Particle(mass, single_probability,
+                            coord = np.random.uniform(0, side_length, 3)) for i in range(number)]
+        clusters_stack.append(Cluster(mass, single_probability,
+                                Particle.calculate_diffusion(friction, temperature),
+                                particles = particles_stack))
 
         clusters_stack[-1].calculate_cluster_diffusion(diffusity_exponent)
 
@@ -136,7 +149,6 @@ if __name__ == '__main__':
     particle_mass =  720
     friction = 0.15
     clusters_stack = generate_model(side_length, concentartion, probability, temperature, diffusion_coefficient)
-    print([cluster.number_particles for cluster in clusters_stack])
-    clusters_coords = [cluster.coords for cluster in clusters_stack]
-    print(clusters_coords)
-    draw_3d_plot(*plot_cube(5), clusters_coords)
+    fig, ax = draw_3d_plot(*plot_cube(side_length), clusters_stack)
+    plt.show()
+    print(len(clusters_stack) == calculate_number_particles(side_length, concentartion))
