@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 import random
+import copy
 
 def plot_cube(side_length):
     cube_definition = [
@@ -52,11 +53,11 @@ def draw_3d_plot(edges, points, clusters):
     # Plot the points themselves to force the scaling of the axes
     ax.scatter(points[:,0], points[:,1], points[:,2], s=0)
 
-
     for cl in clusters:
         if len(cl.particles) != 0:
             for particle in cl.particles:
-                ax.scatter(particle.coord[0], particle.coord[1], particle.coord[2], s=2, c='b')
+                radius = particle.radius
+                ax.scatter(particle.coord[0], particle.coord[1], particle.coord[2], s=cl.radius * side_length / 4, c='b')
     return fig, ax
 
 #calculate number particles in system
@@ -91,7 +92,7 @@ class Cluster(Particle):
 
     def calculate_cluster_diffusion(self, diffusity_exponent):
         if self.diffusion != 0.0 and self.mass != 0.0:
-            self.diffusion *= (self.mass ** diffusity_exponent)
+            self.cluster_diffusion = self.diffusion * (self.mass ** diffusity_exponent)
         else:
             self.diffusion = 0.0
         return self.diffusion
@@ -99,8 +100,7 @@ class Cluster(Particle):
     def calculate_collision(self, another_cluster):
         self.mass += another_cluster.mass
         self.number_particles += another_cluster.number_particles
-        self.coord += another_cluster.coord
-        self.particles += another_cluster.particles
+        self.particles.extend(another_cluster.particles)
 
 #calculate probability forming new cluster from cluster_one and cluster_two
 def calculate_probability_collision(cluster_one, cluster_two,
@@ -115,17 +115,37 @@ def calculate_movement_probability(cluster_one, max_diffusion):
 def calculate_max_diffusion(clusters_stack):
     return max([cluster.diffusion for cluster in clusters_stack])
 
-def generate_direction(cluster):
-    if  cluster.number_particles!= 0:
-        for prt in cluster.particles:
-            for i in range(3):
-                vector = random.choice([0, cluster.radius])
-                if random.choice(['-', '+']) == '-':
-                    vector *= -1
-                prt.coord[i] += vector
+def generate_direction(cluster, side_length, dimension=3):
+    vector = np.zeros(dimension)
+    #i = random.choice([d for d in range(dimension)])
+    for i in range(dimension):
+        vector[i] = 2 * cluster.radius * random.choice([-1, 1])
+    for prt in cluster.particles:
+        prt.coord = (prt.coord + vector) % side_length
     return cluster
 
-def generate_model(side_length, concentartion, probability, temperature, diffusity_exponent):
+def check_neighbors(cluster_one, cluster_two, side_length):
+    for jprt in cluster_two.particles:
+        for iprt in cluster_one.particles:
+            length = np.linalg.norm(jprt.coord - iprt.coord)
+            if length <= cluster_one.radius * 2:
+                return length
+            else:
+                for i in range(len(iprt.coord)):
+                    new_coord = copy.copy(jprt.coord)
+                    new_coord[i] = jprt.coord[i] + side_length
+                    length = np.linalg.norm(new_coord - iprt.coord)
+                    if length <= cluster_one.radius * 2:
+                        return length
+                for i in range(len(iprt.coord)):
+                    new_coord = copy.copy(jprt.coord)
+                    new_coord[i] = jprt.coord[i] - side_length
+                    length = np.linalg.norm(new_coord - iprt.coord)
+                    if length <= cluster_one.radius * 2:
+                        return length
+    return None
+
+def generate_model(side_length, concentartion, probability, temperature, diffusity_exponent, radius=2):
     particle_mass =  720
     friction = 0.15
     boltzmann_constant = 1.380653 * 10 ** (-23)
@@ -147,7 +167,7 @@ def generate_model(side_length, concentartion, probability, temperature, diffusi
         clusters_stack.append(Cluster(mass,
                                 single_probability,
                                 Particle.calculate_diffusion(friction, temperature),
-                                radius = 5,
+                                radius = radius,
                                 particles = particles_stack))
 
         clusters_stack[-1].calculate_cluster_diffusion(diffusity_exponent)
@@ -155,12 +175,15 @@ def generate_model(side_length, concentartion, probability, temperature, diffusi
         #number_particles = number_particles - number
     return clusters_stack
 
-def run_simulation_model(side_length, concentartion, probability, temperature, diffusity_exponent,
-                        clusters_stack, sticking_probability_exponent, single_probability, state_flag):
+def run_simulation_model(side_length,
+                        diffusity_exponent,
+                        sticking_probability_exponent,
+                        single_probability,
+                        clusters_stack):
     # Brownian motion
     while True:
         # randomly select cluster, that will diffuse
-        i_number = random.randint(0, len(clusters_stack))
+        i_number = random.randint(0, len(clusters_stack) - 1)
         i_cluster = clusters_stack[i_number]
 
         # generate random number p between 0 and 1
@@ -170,32 +193,25 @@ def run_simulation_model(side_length, concentartion, probability, temperature, d
             break
 
     # Generate random direction
-    i_cluster = generate_vector(i_cluster)
+    i_cluster = generate_direction(i_cluster, side_length)
 
     # Check neighbor detection
-    length = 0
     collision_flag = False
-    new_clusters_stack = clusters_stack[:i_number] + clusters_stack[i_number + 1:]
-    for clst in new_clusters_stack:
-        for prt in clst.particles:
-            for i_prt in i_cluster.particles:
-                length = np.linalg.norm(np.abs(prt.coord - i_prt.coord))
-                if length < i_cluster.radius:
+    for j_number in range(len(clusters_stack)):
+        if j_number != i_number:
+            length = check_neighbors(i_cluster, clusters_stack[j_number], side_length)
+            if length is not None:
+                # Check collision between clusters
+                # generate number py
+                py = random.random()
+                if py < calculate_probability_collision(clusters_stack[j_number], i_cluster,
+                                                        sticking_probability_exponent, single_probability):
+                    clusters_stack[j_number].calculate_collision(i_cluster)
+                    clusters_stack[j_number].calculate_cluster_diffusion(diffusity_exponent)
+                    del clusters_stack[i_number]
+                    return clusters_stack
 
-                    # Check collision between clusters
-                    # generate number py
-                    py = random.random()
-                    if py < calculate_probability_collision(clst, i_cluster, sticking_probability_exponent, single_probability):
-                        collision_flag = True
-                        break
-            if collision_flag:
-                break
-        if collision_flag:
-            clst.calculate_collision(i_cluster)
-            clusters_stack.remove(i_cluster)
-            break
-
-        return clusters_stack
+    return clusters_stack
 
 if __name__ == '__main__':
 
@@ -203,15 +219,50 @@ if __name__ == '__main__':
 
     friction_coefficient = 0.2
 
-    side_length = 80
-    concentartion = 0.01
+    side_length = 50
+    concentartion = 0.006
     diffusion_coefficient = -0.5
     probability = 0.5
-    single_probability = 0.1
+    single_probability = 0.86
     temperature = 298
+
     particle_mass =  720
-    friction = 0.15
-    clusters_stack = generate_model(side_length, concentartion, probability, temperature, diffusion_coefficient)
+    radius = 0.5
+    viscosity = 25 * 10 ** (-3)
+    friction = 6 * np.pi * viscosity * radius
+
+    clusters_stack = generate_model(side_length,
+                                    concentartion,
+                                    single_probability,
+                                    temperature,
+                                    diffusion_coefficient,
+                                    radius=radius)
+
+    N = 10000
+    dN = np.zeros(N)
+    dN[0] = len(clusters_stack)
+
+    old_clusters_stack = copy.deepcopy(clusters_stack)
+    print(calculate_number_particles(side_length, concentartion))
+    for i in range(N):
+        if len(clusters_stack) == 1:
+            break
+        clusters_stack = run_simulation_model(side_length,
+                                            diffusion_coefficient,
+                                            probability,
+                                            single_probability,
+                                            clusters_stack)
+        if i % 1000 == 0:
+            if i == 1000:
+                fig, ax = draw_3d_plot(*plot_cube(side_length), clusters_stack)
+                plt.show()
+                plt.close()
+            print('iteration = ', i, '; len = ', len(clusters_stack))
+    print(len(clusters_stack))
+    fig, ax = draw_3d_plot(*plot_cube(side_length), old_clusters_stack)
+    plt.show()
+    plt.close()
     fig, ax = draw_3d_plot(*plot_cube(side_length), clusters_stack)
     plt.show()
-    print(len(clusters_stack) == calculate_number_particles(side_length, concentartion))
+    # for i in range(len(clusters_stack)):
+    #     print(i, 'th cluster have particle: ', clusters_stack[i].number_particles)
