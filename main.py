@@ -159,7 +159,6 @@ def generate_model(side_length, concentartion, probability, temperature, diffusi
     clusters_stack = []
     for i in range(number_particles):
         #number = random.randint(0, number_particles)
-
         #particles_stack = [Particle(mass, single_probability,
         #                    coord = np.random.uniform(0, side_length, 3)) for i in range(number)]
         particles_stack = [Particle(mass, single_probability,
