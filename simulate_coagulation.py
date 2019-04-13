@@ -121,53 +121,7 @@ if __name__ == '__main__':
     model = Model(time=1.0, coagulation_matrix=Ph, particles_stack=particles_stack)
     fraction, time_list = model.modeling()
     print(len(fraction))
-    # N = 800 # number of particles
-    # Ph = np.empty((N, N))
-    # A = 1
-    #
-    # with Profiler(message='Create Ph'):
-    #     Ph[:, :] = [[((i + 1) ** (0.75) * (j + 1) ** (-0.75) + (i + 1) ** (-0.75) * (j + 1) ** (0.75)) for j in range(N)] for i in range(N)]
-    # #Ph[:, :] = [[ A * (i + j + 2) for j in range(N)] for i in range(N)]
-    # with Profiler(message='Calculate dtau'):
-    #     dtau = calculate_step_time(Ph)
-    # print(dtau)
-    #
-    # #t = np.arange(0.0, 1.0, dtau)
-    # with Profiler(message='Create particles stack'):
-    #     particles_stack = np.array([Particle(mass=1) for i in range(N)])
-    #
-    # fraction = []
-    # t = 1
-    # T = 1
-    # count = 0
-    # time_list = []
-    # # print(Ph)
-    # with Profiler("General") as stochastic:
-    #     while dtau * count < T:
-    #         # while True:
-    #         i = random.choice([i for i in range(len(particles_stack) - 1)])
-    #         j = random.choice([j for j in range(i, len(particles_stack))])
-    #         #if particles_stack[i].not_empty and particles_stack[j].not_empty:
-    #         pr = choice_coagulation_pair_FDSMC(Ph, i, j)
-    #         if pr:
-    #             Ph = np.delete(Ph, i, 0)
-    #             Ph = np.delete(Ph, i, 1)
-    #             dtau = calculate_step_time(Ph)
-    #             particles_stack[j].make_collision(particles_stack[j])
-    #             particles_stack = np.hstack((particles_stack[:i-1], particles_stack[i:]))
-    #                 # particles_stack[i].mass = 0
-    #                 # particles_stack[i].not_empty = False
-    #                     # break
-    #         if count % (len(particles_stack) * 5) == 0:
-    # #            if count % (N * 10) == 0:
-    #             print('t = {}, dtau = {}'.format(dtau * count, dtau))
-    #             fraction.append(np.sum([1 for i in range(particles_stack.size) if particles_stack[i].mass != 0]) / N)
-    #             time_list.append(dtau * count)
-    #         count += 1
-    #
-    # plt.scatter(time_list, fraction, marker='+', c='c')
-    # # print([particles_stack[i].mass for i in range(particles_stack.size) if particles_stack[i].not_empty])
-    #
+    
     dt = 0.1
     t = np.arange(0, 1 + dt, dt)
     tolerance = 1e-6
