@@ -3,106 +3,187 @@
 import numpy as np
 import random
 import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+from scipy.integrate import odeint
+
+import copy
+import time
 
 from dataclasses import dataclass, field
 from typing import List
 
 @dataclass
+class Profiler(object):
+    message : str = field(default = '')
+    def __enter__(self):
+        self._startTime = time.time()
+
+    def __exit__(self, type, value, traceback):
+        print ("{}\n\tElapsed time: {:.3f} sec".format(self.message, time.time() - self._startTime))
+
+@dataclass
 class Particle:
     mass : float
-    not_empty : bool = field(default=True)
-    velocity : float = field(init=False)
+    not_empty : bool = True
+    velocity : float = field(init = False)
 
     def make_collision(self, other):
         self.mass += other.mass
 
 @dataclass
 class Cluster(Particle):
-    particles : List[Particle] = field(default_factory=list)
+    particles : List[Particle] = field(default_factory = list)
     number_particles : int = field(init = False)
 
-"""
-V(N) - объем системы из N частиц
-m[k] = m[0] * k; m[0] = 1
-u[k](t) - концентрация частиц массы k момент времени t
-Ph[i, j] - интенсивность коагуляции частиц с энергиями i и j
-S - оператор Смолуховского, задающий скорость изменения концентраций
-S = sum(Ph[i, j] * u[i] * u[j]) - 2 * u[k] * sum(Ph[k, i] * u[i])
-hs_function = lambda x : 0 if x < 0 else 1 - функция Хевисайда
-M - искусственный предел размера частиц в системе
-hM = hs_function(M - k)
+@dataclass
+class Model:
+    time : float
+    coagulation_matrix : np.ndarray
+    particles_stack : List[Cluster] = field(default_factory = list, init = True)
+    particles_num : int = 0
+    # _t : List[float] = field(default_factory = list)
 
-Пусть для заданных уравнений рассматриается задача Коши с начальными данными:
-u[k](0) = hM * phi[k]
+    def __post_init__(self):
+        self.particles_number = len(self.particles_stack)
+        self._tic = self.__calculate_step_time(self.coagulation_matrix)
 
-Метод, основанного на случайном розыгрыше актов коагуляции на уровне отдельных частиц
-Пусть :
-    K - множество финитных функций
+    def __calculate_step_time(self, Betta) -> float:
+        return 1 / np.sum([[Betta[i, j] for j in range(Betta.shape[1]) if i != j] for i in range(Betta.shape[0])])
 
-    Рассмотрим парную коагуляцию:
-        Положим, что каждой частице присвоен номер i(1≤i≤N)
-            и она имеет в момент времени t≥0 массу  m[i]
-        Пусть V (N) = N
-        Тогда состояние системы в момент времени t:
-            m(t) = [m[1](t), m[2](t), ..., m[N](t)]
-        Назовем коагуляцию пары частиц i, j (1 <= i < j <= N) преобразование
-            A[i, j]:m->m`=A[i. j](m) такое, что m[k]->m[k], если k != i,j
-                m[i]->m[i] + m[j]
-                m[j]->0
-            Паре сталкивающихся частиц с номерами i j , (i < j)
-                в рассматриваемой системе взаимно однозначно сопоставим подстановку:
-                substitution[i, j] = [[1, 2, ..., i, ..., j, ..., N],
-                                        [1, 2, ..., i, ..., j, ..., N]]
-                множество которых обозначим S2(N); card(S2(N)) = C2[N]
-            Пусть пара сталкивающихся частиц разыгрывается в каждый момент времени:
-                t[n] = n * dtau
-                с вероятностью:
-                choice_probability = 1 / C2[N]
-            Определим случайную величину nu = random.choice([0, 1]),
-                означающая коагуляцию или отсутствие оной.
-            Положим, что вероятность коагуляции частицы энергии k с частицей энергии l равна:
-                dtau(N)(N-1)Ph[k, l] <= 1
-            Величину dtau назовем временем столкновения:
-                0 <= dtau <= 1 / ((N - 1)||Ph2||)
-"""
-def calculate_step_time(Betta):
-    return 2 / np.sum(Betta)
+    def __choice_coagulation_pair_FDSMC(self, Betta, i, j) -> bool:
+        # random.seed(10)
+        R = random.random()
+        beg, mid, top = 0,  np.sum([[Betta[k, l] for l in range(Betta.shape[1]) if k != l] for k in range(Betta.shape[0])]), 0
+        for k in range(i):
+            for l in range(j + 1):
+                if k != l:
+                    if l < j:
+                        beg += Betta[k, l]
+                    top += Betta[k, l]
+        return beg <= R * mid and R * mid <= top
 
-def choice_coagulation_pair(Betta, i, j):
-    return random.choice([0, 1]) < Betta[i, j] / np.max(Betta)
+    def __choice_coagulation_pair(self, Betta, i, j) -> bool:
+        return random.choice([0, 1]) < (Betta[i, j] / np.max(Betta))
+
+    def __choice_coagulation_pair_FDSMC(self, Betta, i, j) -> bool:
+        random.seed()
+        R = random.random()
+        beg, mid, top = 0,  np.sum([[Betta[k, l] for l in range(Betta.shape[1]) if k != l] for k in range(Betta.shape[0])]), 0
+        for k in range(i):
+            for l in range(j + 1):
+                if k != l:
+                    if l < j:
+                        beg += Betta[k, l]
+                    top += Betta[k, l]
+        return beg <= R * mid and R * mid <= top
+
+    def modeling(self):
+        particles_num = len(particles_stack)
+        count = 1
+        fraction = []
+        time_list = []
+        while self._tic * count <= self.time:
+            # Choice pair coagulation
+            i = random.choice([i for i in range(len(self.particles_stack) - 1)])
+            j = random.choice([j for j in range(i, len(self.particles_stack))])
+            pr = self.__choice_coagulation_pair_FDSMC(self.coagulation_matrix, i, j)
+            # If aggregation occurs
+            if pr:
+                self.coagulation_matrix = np.delete(self.coagulation_matrix, i, 0)
+                self.coagulation_matrix = np.delete(self.coagulation_matrix, i, 1)
+                self._tic = self.__calculate_step_time(self.coagulation_matrix)
+                self.particles_stack[j].make_collision(self.particles_stack[j])
+                self.particles_stack = np.hstack((self.particles_stack[:i-1], self.particles_stack[i:]))
+
+            if count % (len(self.particles_stack) * 2) == 0 or self._tic * count >= self.time:
+                print('t = {}, dtau = {}'.format(self._tic * count, self._tic))
+                fraction.append(np.sum([1 for i in range(self.particles_stack.size) if self.particles_stack[i].mass != 0]) / particles_num)
+                time_list.append(self._tic * count)
+            count += 1
+        return fraction, time_list
+
+def dndt(n, t, J, C, N):
+    dndt = np.empty(N)
+    for k in range(N):
+        dndt[k] = 0.5 * np.sum([C[k-i, i] * n[i]  * n[k-i] for i in range(k - 1)]) - n[k] * np.sum([C[k, i] * n[i] for i in range(N)])
+    return dndt
 
 if __name__ == '__main__':
-    N = 1000 # number of particles
-    Ph = np.empty((N, N))
-    A = 0.1
-    #Ph[:, :] = [[((i + 1) ** (0.75) * (j + 1) ** (-0.75) + (i + 1) ** (-0.75) * (j + 1) ** (0.75)) for j in range(N)] for i in range(N)]
-    Ph[:, :] = [[ A * (i + j + 2) for j in range(N)] for i in range(N)]
-    dtau = calculate_step_time(Ph)
-    print(dtau)
-    #t = np.arange(0.0, 1.0, dtau)
-    particles_stack = np.array([Particle(1)] * N)
 
-    fraction = []
-    t = 2.0
-    count = 0
-    time = []
-    while dtau * count < t:
-    # for dt in range(len(t)):
-        # while True:
-        i = random.choice([i for i in range(N - 1)])
-        j = random.choice([j for j in range(i, N)])
-        if particles_stack[i].not_empty and particles_stack[j].not_empty:
-            if choice_coagulation_pair(Ph, i, j):
-                particles_stack[j].make_collision(particles_stack[j])
-                particles_stack[i].mass = 0
-                particles_stack[i].not_empty = False
-                    # break
-        if count % 100000 == 0:
-            if count % 1000000 == 0:
-                print('t = ', dtau * count)
-            fraction.append(np.sum([1 for i in range(particles_stack.size) if particles_stack[i].not_empty == True]) / N)
-            time.append(dtau * count)
-        count += 1
-    plt.plot(time, fraction)
+    N = 200
+    Ph = np.empty((N, N))
+    with Profiler(message='Create Ph'):
+        Ph[:, :] = [[((i + 1) ** (0.75) * (j + 1) ** (-0.75) + (i + 1) ** (-0.75) * (j + 1) ** (0.75)) for j in range(N)] for i in range(N)]
+    t = 1
+    with Profiler(message='Create particles stack'):
+        particles_stack = np.array([Particle(mass=1) for i in range(N)])
+
+    model = Model(time=1.0, coagulation_matrix=Ph, particles_stack=particles_stack)
+    fraction, time_list = model.modeling()
+    print(len(fraction))
+    # N = 800 # number of particles
+    # Ph = np.empty((N, N))
+    # A = 1
+    #
+    # with Profiler(message='Create Ph'):
+    #     Ph[:, :] = [[((i + 1) ** (0.75) * (j + 1) ** (-0.75) + (i + 1) ** (-0.75) * (j + 1) ** (0.75)) for j in range(N)] for i in range(N)]
+    # #Ph[:, :] = [[ A * (i + j + 2) for j in range(N)] for i in range(N)]
+    # with Profiler(message='Calculate dtau'):
+    #     dtau = calculate_step_time(Ph)
+    # print(dtau)
+    #
+    # #t = np.arange(0.0, 1.0, dtau)
+    # with Profiler(message='Create particles stack'):
+    #     particles_stack = np.array([Particle(mass=1) for i in range(N)])
+    #
+    # fraction = []
+    # t = 1
+    # T = 1
+    # count = 0
+    # time_list = []
+    # # print(Ph)
+    # with Profiler("General") as stochastic:
+    #     while dtau * count < T:
+    #         # while True:
+    #         i = random.choice([i for i in range(len(particles_stack) - 1)])
+    #         j = random.choice([j for j in range(i, len(particles_stack))])
+    #         #if particles_stack[i].not_empty and particles_stack[j].not_empty:
+    #         pr = choice_coagulation_pair_FDSMC(Ph, i, j)
+    #         if pr:
+    #             Ph = np.delete(Ph, i, 0)
+    #             Ph = np.delete(Ph, i, 1)
+    #             dtau = calculate_step_time(Ph)
+    #             particles_stack[j].make_collision(particles_stack[j])
+    #             particles_stack = np.hstack((particles_stack[:i-1], particles_stack[i:]))
+    #                 # particles_stack[i].mass = 0
+    #                 # particles_stack[i].not_empty = False
+    #                     # break
+    #         if count % (len(particles_stack) * 5) == 0:
+    # #            if count % (N * 10) == 0:
+    #             print('t = {}, dtau = {}'.format(dtau * count, dtau))
+    #             fraction.append(np.sum([1 for i in range(particles_stack.size) if particles_stack[i].mass != 0]) / N)
+    #             time_list.append(dtau * count)
+    #         count += 1
+    #
+    # plt.scatter(time_list, fraction, marker='+', c='c')
+    # # print([particles_stack[i].mass for i in range(particles_stack.size) if particles_stack[i].not_empty])
+    #
+    dt = 0.1
+    t = np.arange(0, 1 + dt, dt)
+    tolerance = 1e-6
+    J = 1.
+    C = np.empty((N, N))
+    C[:, :] = [[((i + 1) ** (0.75) * (j + 1) ** (-0.75) + (i + 1) ** (-0.75) * (j + 1) ** (0.75)) for j in range(N)] for i in range(N)]
+    # C = copy.deepcopy(Ph)
+    n = np.zeros(N)
+    n[1] = 1
+    with Profiler('ODE') as sec:
+        dn = odeint(dndt, n, t, (J, C, N))
+    dN = np.empty(dn.shape[0])
+    q = 0
+    for i in range(dn.shape[0]):
+        dN[i] = i ** q * np.sum(dn[i, :])
+    plt.plot(t, dN)
+    plt.scatter(time_list, fraction, marker='+', c='c')
+
     plt.show()
-    print(fraction)
